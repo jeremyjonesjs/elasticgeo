@@ -67,6 +67,8 @@ public class ElasticDataStore extends ContentDataStore {
 
     private Double gridThreshold;
 
+    private AggregationCache aggregationCache;
+
     public enum ArrayEncoding {
 
         /**
@@ -115,6 +117,9 @@ public class ElasticDataStore extends ContentDataStore {
         docTypes = new HashMap<>();
 
         arrayEncoding = ArrayEncoding.JSON;
+
+        aggregationCache = new AggregationCacheImpl();
+        aggregationCache.initialize(this);
     }
 
     @Override
@@ -127,7 +132,7 @@ public class ElasticDataStore extends ContentDataStore {
 
     @Override
     protected ContentFeatureSource createFeatureSource(ContentEntry entry) throws IOException {
-        return new ElasticFeatureSource(entry, Query.ALL);
+        return new ElasticFeatureSource(entry, Query.ALL, aggregationCache);
     }
 
     @Override

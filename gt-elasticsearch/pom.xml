@@ -72,6 +72,16 @@
       <artifactId>log4j</artifactId>
       <version>${log4j.version}</version>
     </dependency>
+    <dependency>
+      <groupId>com.github.davidmoten</groupId>
+      <artifactId>rtree2</artifactId>
+      <version>0.9-RC1</version>
+    </dependency>
+    <dependency>
+      <groupId>com.github.davidmoten</groupId>
+      <artifactId>geo</artifactId>
+      <version>0.7.6</version>
+    </dependency>
 
     <dependency>
       <groupId>org.geotools</groupId>

@@ -76,7 +76,7 @@ public class ElasticFeatureFilterIT extends ElasticTestSupport {
     @Test @Ignore
     public void testSchemaWithoutLayerConfig() throws Exception {
         init();
-        ElasticFeatureSource featureSource = new ElasticFeatureSource(new ContentEntry(dataStore, new NameImpl("invalid")),null);
+        ElasticFeatureSource featureSource = new ElasticFeatureSource(new ContentEntry(dataStore, new NameImpl("invalid")),null, null);
         SimpleFeatureType schema = featureSource.getSchema();        
         assertNotNull(schema);
         assertEquals(0, schema.getAttributeCount());

@@ -6,6 +6,8 @@ package mil.nga.giat.data.elasticsearch;
 
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
@@ -37,8 +39,12 @@ class ElasticFeatureSource extends ContentFeatureSource {
 
     private Boolean filterFullySupported;
 
-    public ElasticFeatureSource(ContentEntry entry, Query query) throws IOException {
+    private AggregationCache aggregationCache;
+
+    public ElasticFeatureSource(ContentEntry entry, Query query, AggregationCache aggregationCache) throws IOException {
         super(entry, query);
+
+        this.aggregationCache = aggregationCache;
 
         final ElasticDataStore dataStore = getDataStore();
         if (dataStore.getLayerConfigurations().get(entry.getName().getLocalPart()) == null) {
@@ -110,22 +116,45 @@ class ElasticFeatureSource extends ContentFeatureSource {
         LOGGER.fine("getReaderInternal");
         FeatureReader<SimpleFeatureType, SimpleFeature> reader;
         try {
-            final ElasticDataStore dataStore = getDataStore();
-            final String docType = dataStore.getDocType(entry.getName());
-            final boolean scroll = !useSortOrPagination(query) && dataStore.getScrollEnabled();
-            final ElasticRequest searchRequest = prepareSearchRequest(query, scroll);
-            final ElasticResponse sr = dataStore.getClient().search(dataStore.getIndexName(), docType, searchRequest);
-            if (LOGGER.isLoggable(Level.FINE)) {
-                LOGGER.fine("Search response: " + sr);
-            }
-            if (!scroll) {
-                reader = new ElasticFeatureReader(getState(), sr);
+            List<Map<String, Object>> cachedBuckets = this.aggregationCache.getBuckets(query);
+
+            LOGGER.severe(">>> Got " + cachedBuckets.size() + " buckets from cache");
+
+            Map<String,ElasticAggregation> aggregations = new HashMap<>();
+            ElasticAggregation elasticAggregation = new ElasticAggregation();
+            elasticAggregation.setBuckets(cachedBuckets);
+            aggregations.put("cache", elasticAggregation);
+            reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
+
+/*            if (cachedBuckets.size() == 0) {
+                LOGGER.severe(">>>>>>>>>>>>>>>> Cache Miss! Running Search >>>>>>>>>>>>>>>>>");
+                final ElasticDataStore dataStore = getDataStore();
+                final String docType = dataStore.getDocType(entry.getName());
+                final boolean scroll = !useSortOrPagination(query) && dataStore.getScrollEnabled();
+                final ElasticRequest searchRequest = prepareSearchRequest(query, scroll);
+                final ElasticResponse sr = dataStore.getClient().search(dataStore.getIndexName(), docType, searchRequest);
+                if (LOGGER.isLoggable(Level.FINE)) {
+                    LOGGER.fine("Search response: " + sr);
+                }
+
+                this.aggregationCache.putBuckets(query, sr.getAggregations().values().iterator().next().getBuckets());
+
+                if (!scroll) {
+                    reader = new ElasticFeatureReader(getState(), sr);
+                } else {
+                    reader = new ElasticFeatureReaderScroll(getState(), sr, getSize(query));
+                }
+                if (!filterFullySupported) {
+                    reader = new FilteringFeatureReader<>(reader, query.getFilter());
+                }
             } else {
-                reader = new ElasticFeatureReaderScroll(getState(), sr, getSize(query));
-            }
-            if (!filterFullySupported) {
-                reader = new FilteringFeatureReader<>(reader, query.getFilter());
-            }
+                LOGGER.severe(">>>>>>>>>>>>>>>> Cache Hit! >>>>>>>>>>>>>>>>>");
+                Map<String,ElasticAggregation> aggregations = new HashMap<>();
+                ElasticAggregation elasticAggregation = new ElasticAggregation();
+                elasticAggregation.setBuckets(cachedBuckets);
+                aggregations.put("cache", elasticAggregation);
+                reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
+            }*/
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, e.getMessage(), e);
             throw new IOException("Error executing query search", e);
