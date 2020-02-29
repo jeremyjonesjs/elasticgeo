@@ -116,18 +116,26 @@ class ElasticFeatureSource extends ContentFeatureSource {
         LOGGER.fine("getReaderInternal");
         FeatureReader<SimpleFeatureType, SimpleFeature> reader;
         try {
-            List<Map<String, Object>> cachedBuckets = this.aggregationCache.getBuckets(query);
+            final FilterToElastic filterToElastic = new FilterToElastic();
+            filterToElastic.setFeatureType(buildFeatureType());
+            filterToElastic.encode(query);
+            int precision = Integer.parseInt((String) filterToElastic.getAggregations().get("agg").get("geohash_grid").get("precision"));
 
-            LOGGER.severe(">>> Got " + cachedBuckets.size() + " buckets from cache");
+            // FIXME bug: if no results, request gets stuck in infinite loop and is killed by GS after 60s
 
-            Map<String,ElasticAggregation> aggregations = new HashMap<>();
-            ElasticAggregation elasticAggregation = new ElasticAggregation();
-            elasticAggregation.setBuckets(cachedBuckets);
-            aggregations.put("cache", elasticAggregation);
-            reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
+            if (precision < 6) {
+                List<Map<String, Object>> cachedBuckets = this.aggregationCache.getBuckets(precision, query);
 
-/*            if (cachedBuckets.size() == 0) {
-                LOGGER.severe(">>>>>>>>>>>>>>>> Cache Miss! Running Search >>>>>>>>>>>>>>>>>");
+                Map<String, ElasticAggregation> aggregations = new HashMap<>();
+                if (!cachedBuckets.isEmpty()) {
+                    ElasticAggregation elasticAggregation = new ElasticAggregation();
+                    elasticAggregation.setBuckets(cachedBuckets);
+                    aggregations.put("cache", elasticAggregation);
+                }
+
+                reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
+            } else {
+                LOGGER.severe(">>> Running search for precision " + precision);
                 final ElasticDataStore dataStore = getDataStore();
                 final String docType = dataStore.getDocType(entry.getName());
                 final boolean scroll = !useSortOrPagination(query) && dataStore.getScrollEnabled();
@@ -136,9 +144,6 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 if (LOGGER.isLoggable(Level.FINE)) {
                     LOGGER.fine("Search response: " + sr);
                 }
-
-                this.aggregationCache.putBuckets(query, sr.getAggregations().values().iterator().next().getBuckets());
-
                 if (!scroll) {
                     reader = new ElasticFeatureReader(getState(), sr);
                 } else {
@@ -147,14 +152,7 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 if (!filterFullySupported) {
                     reader = new FilteringFeatureReader<>(reader, query.getFilter());
                 }
-            } else {
-                LOGGER.severe(">>>>>>>>>>>>>>>> Cache Hit! >>>>>>>>>>>>>>>>>");
-                Map<String,ElasticAggregation> aggregations = new HashMap<>();
-                ElasticAggregation elasticAggregation = new ElasticAggregation();
-                elasticAggregation.setBuckets(cachedBuckets);
-                aggregations.put("cache", elasticAggregation);
-                reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
-            }*/
+            }
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, e.getMessage(), e);
             throw new IOException("Error executing query search", e);

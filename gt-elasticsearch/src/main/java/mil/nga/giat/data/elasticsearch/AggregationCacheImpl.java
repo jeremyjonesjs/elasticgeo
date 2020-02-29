@@ -9,17 +9,15 @@ import com.github.davidmoten.rtree2.geometry.Geometry;
 import com.github.davidmoten.rtree2.geometry.Rectangle;
 import com.github.davidmoten.rtree2.internal.EntryDefault;
 import org.geotools.data.Query;
-import org.geotools.filter.visitor.ExtractBoundsFilterVisitor;
 import org.geotools.util.logging.Logging;
-import org.locationtech.jts.geom.Envelope;
-import org.opengis.filter.Filter;
-import org.opengis.filter.sort.SortBy;
-import org.opengis.filter.sort.SortOrder;
 import org.opengis.filter.spatial.BBOX;
 import org.opengis.geometry.BoundingBox;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -28,23 +26,20 @@ public class AggregationCacheImpl implements AggregationCache {
 
     private final static Logger LOGGER = Logging.getLogger(AggregationCacheImpl.class);
 
-    private RTree<Map<String, Object>, Geometry> tree;
+    private Map<Integer, RTree<Map<String, Object>, Geometry>> treesByPrecision;
 
     public AggregationCacheImpl() {
-        tree = RTree.star().maxChildren(6).create();
+        treesByPrecision = new HashMap<>();
     }
 
     @Override
     public void initialize(ElasticDataStore dataStore) throws IOException {
-        ElasticRequest searchRequest = prepareSearchRequest(null);
-        ElasticResponse response = dataStore.getClient().search(dataStore.getIndexName(), "cell-towers", searchRequest);
-        List<Map<String, Object>> buckets = response.getAggregations().values().iterator().next().getBuckets();
-        LOGGER.severe("*** INITIALIZED WITH " + buckets.size() + " BUCKETS");
-        this.putBuckets(null, buckets);
+        performAggregationAndCacheResults(dataStore, 4);
+        performAggregationAndCacheResults(dataStore, 5);
     }
 
     @Override
-    public List<Map<String, Object>> getBuckets(Query query) {
+    public List<Map<String, Object>> getBuckets(int precision, Query query) {
         BoundingBox bounds = ((BBOX) query.getFilter()).getBounds();
 
         LOGGER.severe("... ORIGINAL bounds: [" + bounds.getMinX() + "," + bounds.getMinY() + "," + bounds.getMaxX() + "," + bounds.getMaxY());
@@ -57,37 +52,48 @@ public class AggregationCacheImpl implements AggregationCache {
         LOGGER.severe("... Searching cache for bounds: [" + rectangle.x1() + "," + rectangle.y1() + "," + rectangle.x2() + "," + rectangle.y2());
 
         Iterable<Entry<Map<String, Object>, Geometry>> results =
-                tree.search(rectangle);
+                treesByPrecision.get(precision).search(rectangle);
 
         List<Map<String, Object>> buckets = StreamSupport.stream(results.spliterator(), false)
                 .map(entry -> entry.value())
                 .collect(Collectors.toList());
 
-        LOGGER.severe("... Found " + buckets.size() + " buckets");
+        LOGGER.severe("... Found " + buckets.size() + " buckets for precision " + precision);
 
         return buckets;
     }
 
-    @Override
-    public void putBuckets(Query query, List<Map<String, Object>> buckets) {
+    private void putBuckets(int precision, List<Map<String, Object>> buckets) {
         List<Entry<Map<String, Object>, Geometry>> entries = new ArrayList<>();
         for (Map<String, Object> bucket : buckets) {
             LatLong latLong = GeoHash.decodeHash((String) bucket.get("key"));
             entries.add(EntryDefault.entry(bucket, Geometries.pointGeographic(latLong.getLon(), latLong.getLat())));
         }
-        LOGGER.severe("... Adding " + entries.size() + " buckets to cache");
-        tree = tree.add(entries);
+        LOGGER.severe("... Creating tree with " + entries.size() + " buckets for precision " + precision);
+        treesByPrecision.put(precision, RTree.create(entries)); // TODO decide on best rtree config
     }
 
-    private ElasticRequest prepareSearchRequest(Query query) throws IOException {
+    private void performAggregationAndCacheResults(ElasticDataStore dataStore, int precision) throws IOException {
+        List<Map<String, Object>> buckets = performAggregation(dataStore, precision);
+        LOGGER.severe("*** INITIALIZED PRECISION " + precision + " WITH " + buckets.size() + " BUCKETS");
+        this.putBuckets(precision, buckets);
+    }
+
+    private List<Map<String, Object>> performAggregation(ElasticDataStore dataStore, int precision) throws IOException {
+        ElasticRequest searchRequest = prepareSearchRequest(precision);
+        ElasticResponse response = dataStore.getClient().search(dataStore.getIndexName(), "cell-towers", searchRequest);
+        return response.getAggregations().values().iterator().next().getBuckets();
+    }
+
+    private ElasticRequest prepareSearchRequest(int precision) throws IOException {
         final ElasticRequest searchRequest = new ElasticRequest();
 
         //searchRequest.setQuery(queryBuilder);
 
         Map<String, Object> grid = new HashMap<>();
         grid.put("field", "location");
-        grid.put("precision", "4");
-        grid.put("size", "100000");
+        grid.put("precision", String.valueOf(precision));
+        grid.put("size", "1000000");
         Map<String, Map<String, Object>> aggregation = new HashMap<>();
         aggregation.put("geohash_grid", grid);
         Map<String, Map<String, Map<String, Object>>> aggregations = new HashMap<>();

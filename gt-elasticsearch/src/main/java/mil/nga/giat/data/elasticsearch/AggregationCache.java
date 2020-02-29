@@ -10,8 +10,6 @@ public interface AggregationCache {
 
     void initialize(ElasticDataStore dataStore) throws IOException;
 
-    List<Map<String, Object>> getBuckets(Query query);
-
-    void putBuckets(Query query, List<Map<String, Object>> buckets);
+    List<Map<String, Object>> getBuckets(int precision, Query query);
 
 }
