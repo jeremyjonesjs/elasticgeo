@@ -5,10 +5,7 @@
 package mil.nga.giat.process.elasticsearch;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.logging.Logger;
 
 import org.geotools.coverage.CoverageFactoryFinder;
@@ -66,6 +63,7 @@ abstract class GeoHashGrid {
     }
 
     public void initalize(ReferencedEnvelope srcEnvelope, SimpleFeatureCollection features) throws TransformException, FactoryException {
+        long start = System.currentTimeMillis();
         final List<Map<String, Object>> buckets = readFeatures(features);
 
         final String firstGeohash = buckets.isEmpty() ? null : (String) buckets.get(0).get("key");
@@ -106,6 +104,8 @@ abstract class GeoHashGrid {
         });
         cells.forEach(cell -> updateGrid(cell.getGeohash(), cell.getValue()));
         LOGGER.fine("Read " + cells.size() + " aggregation buckets");
+
+        LOGGER.severe("Total time in GeoHashGrid.initialize: " + (System.currentTimeMillis() - start) + " ms");
     }
 
     protected abstract Number computeCellValue(Map<String, Object> bucket);
@@ -135,23 +135,22 @@ abstract class GeoHashGrid {
     }
 
     private List<Map<String, Object>> readFeatures(SimpleFeatureCollection features) {
-        final ObjectMapper mapper = new ObjectMapper();
+        long start = System.currentTimeMillis();
 
-        final List<Map<String, Object>> buckets = new ArrayList<>();
-        try (SimpleFeatureIterator iterator = features.features()) {
-            while (iterator.hasNext()) {
-                final SimpleFeature feature = iterator.next();
-                if (feature.getAttribute("_aggregation") != null) {
-                    final byte[] data = (byte[]) feature.getAttribute("_aggregation");
-                    try {
-                        final Map<String,Object> aggregation = mapper.readValue(data, new TypeReference<Map<String,Object>>() {});
-                        buckets.add(aggregation);
-                    } catch (IOException e) {
-                        LOGGER.fine("Failed to parse aggregation value: " + e);
-                    }
-                }
+        SimpleFeatureIterator featureIterator = features.features();
+        LOGGER.severe("Time in features(): " + (System.currentTimeMillis() - start) + " ms");
+
+        List<Map<String, Object>> buckets = Collections.emptyList();
+
+        try (SimpleFeatureIterator iterator = featureIterator) {
+            // TODO JEJ iterator will have zero or one items. If one, that one contains the entire list of buckets.
+            if (iterator.hasNext()) {
+                buckets = (List<Map<String, Object>>) iterator.next().getAttribute("_aggregation");
             }
         }
+
+        LOGGER.severe("Total time in readFeatures: " + (System.currentTimeMillis() - start) + " ms");
+
         return buckets;
     }
 

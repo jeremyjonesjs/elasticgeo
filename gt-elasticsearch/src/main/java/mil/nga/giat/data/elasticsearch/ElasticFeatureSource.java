@@ -35,7 +35,7 @@ import org.opengis.referencing.crs.CoordinateReferenceSystem;
  */
 class ElasticFeatureSource extends ContentFeatureSource {
 
-    private static final int MAX_CACHED_PRECISION = 5;
+    private static final int MAX_CACHED_PRECISION = 6;
 
     private final static Logger LOGGER = Logging.getLogger(ElasticFeatureSource.class);
 
@@ -133,12 +133,13 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 Map<String, ElasticAggregation> aggregations = new HashMap<>();
                 if (!cachedBuckets.isEmpty()) {
                     ElasticAggregation elasticAggregation = new ElasticAggregation();
-       89             elasticAggregation.setBuckets(cachedBuckets);
+                    elasticAggregation.setBuckets(cachedBuckets);
                     aggregations.put("cache", elasticAggregation);
                 }
 
                 reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
             } else {
+                long start = System.currentTimeMillis();
                 LOGGER.severe(">>> Running search for precision " + precision + " with user filter: " + userFilterApplied);
                 final ElasticDataStore dataStore = getDataStore();
                 final String docType = dataStore.getDocType(entry.getName());
@@ -159,6 +160,7 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 if (!filterFullySupported) {
                     reader = new FilteringFeatureReader<>(reader, query.getFilter());
                 }
+                LOGGER.severe("Total time to run search: " + (System.currentTimeMillis() - start) + " ms");
             }
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, e.getMessage(), e);

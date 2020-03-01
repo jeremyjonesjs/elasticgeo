@@ -32,12 +32,14 @@ public class AggregationCacheImpl implements AggregationCache {
     @Override
     public void initialize(ElasticDataStore dataStore) throws IOException {
         performAggregationAndCacheResults(dataStore, 4, 90);
-        performAggregationAndCacheResults(dataStore, 5, 10);
-//        performAggregationAndCacheResults(dataStore, 6, 10);
+        performAggregationAndCacheResults(dataStore, 5, 30);
+        performAggregationAndCacheResults(dataStore, 6, 10);
     }
 
     @Override
     public List<Map<String, Object>> getBuckets(int precision, Query query) {
+        long start = System.currentTimeMillis();
+
         BoundingBox bounds = ((BBOX) query.getFilter()).getBounds();
 
         LOGGER.severe("... ORIGINAL bounds: [" + bounds.getMinX() + "," + bounds.getMinY() + "," + bounds.getMaxX() + "," + bounds.getMaxY());
@@ -57,6 +59,8 @@ public class AggregationCacheImpl implements AggregationCache {
                 .collect(Collectors.toList());
 
         LOGGER.severe("... Found " + buckets.size() + " buckets for precision " + precision);
+
+        LOGGER.severe("RTree search took " + (System.currentTimeMillis() - start) + " ms");
 
         return buckets;
     }

@@ -23,11 +23,7 @@ import org.opengis.feature.simple.SimpleFeatureType;
 import org.opengis.feature.type.AttributeDescriptor;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.Date;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.logging.Logger;
 
 /**
@@ -51,7 +47,7 @@ class ElasticFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFea
 
     private Iterator<ElasticHit> searchHitIterator;
 
-    private Iterator<Map<String,Object>> aggregationIterator;
+    private Iterator<List<Map<String,Object>>> aggregationIterator;
 
     private final ElasticParserUtil parserUtil;
 
@@ -73,8 +69,10 @@ class ElasticFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFea
             if (aggregations.size() > 1) {
                 LOGGER.info("Result has multiple aggregations. Using " + aggregationName);
             }
-            if (aggregations.get(aggregationName).getBuckets() != null) {
-                this.aggregationIterator = aggregations.get(aggregationName).getBuckets().iterator();
+            List<Map<String, Object>> buckets = aggregations.get(aggregationName).getBuckets();
+            if (buckets != null) {
+                // TODO JEJ changed to return a single entry with all the buckets for performance
+                this.aggregationIterator = Arrays.asList(buckets).iterator();
             }
         }
 
@@ -180,13 +178,7 @@ class ElasticFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFea
     }
 
     private void nextAggregation() {
-        final Map<String, Object> aggregation = aggregationIterator.next();
-        try {
-            final byte[] data = mapper.writeValueAsBytes(aggregation);
-            builder.set("_aggregation", data);
-        } catch (IOException e) {
-            LOGGER.warning("Unable to set aggregation. Try reloading layer.");
-        }
+        builder.set("_aggregation", aggregationIterator.next());
     }
 
     @Override
