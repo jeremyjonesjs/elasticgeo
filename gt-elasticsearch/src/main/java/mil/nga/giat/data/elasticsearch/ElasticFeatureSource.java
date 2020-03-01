@@ -35,6 +35,8 @@ import org.opengis.referencing.crs.CoordinateReferenceSystem;
  */
 class ElasticFeatureSource extends ContentFeatureSource {
 
+    private static final int MAX_CACHED_PRECISION = 5;
+
     private final static Logger LOGGER = Logging.getLogger(ElasticFeatureSource.class);
 
     private Boolean filterFullySupported;
@@ -121,21 +123,23 @@ class ElasticFeatureSource extends ContentFeatureSource {
             filterToElastic.encode(query);
             int precision = Integer.parseInt((String) filterToElastic.getAggregations().get("agg").get("geohash_grid").get("precision"));
 
+            boolean userFilterApplied = filterToElastic.getNativeQueryBuilder().size() != 1 || filterToElastic.getNativeQueryBuilder().keySet().iterator().next() != "match_all";
+
             // FIXME bug: if no results, request gets stuck in infinite loop and is killed by GS after 60s
 
-            if (precision < 6) {
+            if (precision <= MAX_CACHED_PRECISION && !userFilterApplied) {
                 List<Map<String, Object>> cachedBuckets = this.aggregationCache.getBuckets(precision, query);
 
                 Map<String, ElasticAggregation> aggregations = new HashMap<>();
                 if (!cachedBuckets.isEmpty()) {
                     ElasticAggregation elasticAggregation = new ElasticAggregation();
-                    elasticAggregation.setBuckets(cachedBuckets);
+       89             elasticAggregation.setBuckets(cachedBuckets);
                     aggregations.put("cache", elasticAggregation);
                 }
 
                 reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
             } else {
-                LOGGER.severe(">>> Running search for precision " + precision);
+                LOGGER.severe(">>> Running search for precision " + precision + " with user filter: " + userFilterApplied);
                 final ElasticDataStore dataStore = getDataStore();
                 final String docType = dataStore.getDocType(entry.getName());
                 final boolean scroll = !useSortOrPagination(query) && dataStore.getScrollEnabled();
@@ -144,6 +148,9 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 if (LOGGER.isLoggable(Level.FINE)) {
                     LOGGER.fine("Search response: " + sr);
                 }
+
+                LOGGER.severe(">>> Search returned " + sr.getAggregations().values().iterator().next().getBuckets().size() + " buckets");
+
                 if (!scroll) {
                     reader = new ElasticFeatureReader(getState(), sr);
                 } else {

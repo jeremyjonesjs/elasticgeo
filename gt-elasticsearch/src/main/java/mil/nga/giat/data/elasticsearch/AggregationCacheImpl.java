@@ -14,10 +14,7 @@ import org.opengis.filter.spatial.BBOX;
 import org.opengis.geometry.BoundingBox;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -34,8 +31,9 @@ public class AggregationCacheImpl implements AggregationCache {
 
     @Override
     public void initialize(ElasticDataStore dataStore) throws IOException {
-        performAggregationAndCacheResults(dataStore, 4);
-        performAggregationAndCacheResults(dataStore, 5);
+        performAggregationAndCacheResults(dataStore, 4, 90);
+        performAggregationAndCacheResults(dataStore, 5, 10);
+//        performAggregationAndCacheResults(dataStore, 6, 10);
     }
 
     @Override
@@ -64,31 +62,50 @@ public class AggregationCacheImpl implements AggregationCache {
     }
 
     private void putBuckets(int precision, List<Map<String, Object>> buckets) {
-        List<Entry<Map<String, Object>, Geometry>> entries = new ArrayList<>();
-        for (Map<String, Object> bucket : buckets) {
-            LatLong latLong = GeoHash.decodeHash((String) bucket.get("key"));
-            entries.add(EntryDefault.entry(bucket, Geometries.pointGeographic(latLong.getLon(), latLong.getLat())));
-        }
-        LOGGER.severe("... Creating tree with " + entries.size() + " buckets for precision " + precision);
-        treesByPrecision.put(precision, RTree.create(entries)); // TODO decide on best rtree config
+        LOGGER.severe("... Creating tree with " + buckets.size() + " buckets for precision " + precision);
+        treesByPrecision.put(precision, RTree.star().minChildren(30).maxChildren(100).create(buckets.stream().map(bucket -> {
+            final LatLong latLong = GeoHash.decodeHash((String) bucket.get("key"));
+            return EntryDefault.entry(bucket, (Geometry) Geometries.pointGeographic(latLong.getLon(), latLong.getLat()));
+        }).collect(Collectors.toList())));
     }
 
-    private void performAggregationAndCacheResults(ElasticDataStore dataStore, int precision) throws IOException {
-        List<Map<String, Object>> buckets = performAggregation(dataStore, precision);
+    private void performAggregationAndCacheResults(ElasticDataStore dataStore, int precision, int latitudeSize) throws IOException {
+        List<Map<String, Object>> buckets = new ArrayList<>();
+        for (double minLat = -180d; minLat <= (180d - latitudeSize); minLat += latitudeSize) {
+            buckets.addAll(performAggregation(dataStore, precision, minLat, minLat + latitudeSize));
+        }
         LOGGER.severe("*** INITIALIZED PRECISION " + precision + " WITH " + buckets.size() + " BUCKETS");
         this.putBuckets(precision, buckets);
     }
 
-    private List<Map<String, Object>> performAggregation(ElasticDataStore dataStore, int precision) throws IOException {
-        ElasticRequest searchRequest = prepareSearchRequest(precision);
+    private List<Map<String, Object>> performAggregation(ElasticDataStore dataStore, int precision, double minLat, double maxLat) throws IOException {
+        ElasticRequest searchRequest = prepareSearchRequest(precision, minLat, maxLat);
         ElasticResponse response = dataStore.getClient().search(dataStore.getIndexName(), "cell-towers", searchRequest);
         return response.getAggregations().values().iterator().next().getBuckets();
     }
 
-    private ElasticRequest prepareSearchRequest(int precision) throws IOException {
+    private ElasticRequest prepareSearchRequest(int precision, double minLat, double maxLat) {
         final ElasticRequest searchRequest = new ElasticRequest();
 
-        //searchRequest.setQuery(queryBuilder);
+        Map<String, Object> must = new HashMap<>();
+        Map<String, Object> matchAll = new HashMap<>();
+        Map<String, Object> query = new HashMap<>();
+        must.put("match_all", matchAll);
+
+        Map<String, Object> location = new HashMap<>();
+        Map<String, Object> geoBoundingBox = new HashMap<>();
+        Map<String, Object> filter = new HashMap<>();
+        location.put("bottom_left", Arrays.asList(minLat, -90));
+        location.put("top_right", Arrays.asList(maxLat, 90));
+        geoBoundingBox.put("location", location);
+        filter.put("geo_bounding_box", geoBoundingBox);
+
+        Map<String, Object> bool = new HashMap<>();
+        bool.put("must", must);
+        bool.put("filter", filter);
+        query.put("bool", bool);
+
+        searchRequest.setQuery(query);
 
         Map<String, Object> grid = new HashMap<>();
         grid.put("field", "location");
