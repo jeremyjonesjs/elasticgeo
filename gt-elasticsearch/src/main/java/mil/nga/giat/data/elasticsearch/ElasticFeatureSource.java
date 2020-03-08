@@ -121,13 +121,17 @@ class ElasticFeatureSource extends ContentFeatureSource {
             final FilterToElastic filterToElastic = new FilterToElastic();
             filterToElastic.setFeatureType(buildFeatureType());
             filterToElastic.encode(query);
-            int precision = Integer.parseInt((String) filterToElastic.getAggregations().get("agg").get("geohash_grid").get("precision"));
+
+            Integer precision = null;
+            if (filterToElastic.getAggregations() != null && filterToElastic.getAggregations().containsKey("agg")) {
+                precision = Integer.parseInt((String) filterToElastic.getAggregations().get("agg").get("geohash_grid").get("precision"));
+            }
 
             boolean userFilterApplied = filterToElastic.getNativeQueryBuilder().size() != 1 || filterToElastic.getNativeQueryBuilder().keySet().iterator().next() != "match_all";
 
             // FIXME bug: if no results, request gets stuck in infinite loop and is killed by GS after 60s
 
-            if (precision <= MAX_CACHED_PRECISION && !userFilterApplied) {
+            if (precision != null && precision <= MAX_CACHED_PRECISION && !userFilterApplied) {
                 List<Map<String, Object>> cachedBuckets = this.aggregationCache.getBuckets(precision, query);
 
                 Map<String, ElasticAggregation> aggregations = new HashMap<>();
@@ -150,7 +154,12 @@ class ElasticFeatureSource extends ContentFeatureSource {
                     LOGGER.fine("Search response: " + sr);
                 }
 
-                LOGGER.severe(">>> Search returned " + sr.getAggregations().values().iterator().next().getBuckets().size() + " buckets");
+                if (sr.getAggregations() != null) {
+                    LOGGER.severe(">>> Search returned " + sr.getAggregations().values().iterator().next().getBuckets().size() + " buckets");
+                }
+                if (sr.getNumHits() > 0) {
+                    LOGGER.severe(">>> Search returned " + sr.getNumHits() + " hits");
+                }
 
                 if (!scroll) {
                     reader = new ElasticFeatureReader(getState(), sr);
