@@ -12,4 +12,6 @@ public interface AggregationCache {
 
     List<Map<String, Object>> getBuckets(int precision, Query query);
 
+    boolean supportsQuery(FilterToElastic filterToElastic);
+
 }

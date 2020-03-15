@@ -35,8 +35,6 @@ import org.opengis.referencing.crs.CoordinateReferenceSystem;
  */
 class ElasticFeatureSource extends ContentFeatureSource {
 
-    private static final int MAX_CACHED_PRECISION = 6;
-
     private final static Logger LOGGER = Logging.getLogger(ElasticFeatureSource.class);
 
     private Boolean filterFullySupported;
@@ -127,11 +125,9 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 precision = Integer.parseInt((String) filterToElastic.getAggregations().get("agg").get("geohash_grid").get("precision"));
             }
 
-            boolean userFilterApplied = filterToElastic.getNativeQueryBuilder().size() != 1 || filterToElastic.getNativeQueryBuilder().keySet().iterator().next() != "match_all";
-
             // FIXME bug: if no results, request gets stuck in infinite loop and is killed by GS after 60s
 
-            if (precision != null && precision <= MAX_CACHED_PRECISION && !userFilterApplied) {
+            if (this.aggregationCache.supportsQuery(filterToElastic)) {
                 List<Map<String, Object>> cachedBuckets = this.aggregationCache.getBuckets(precision, query);
 
                 Map<String, ElasticAggregation> aggregations = new HashMap<>();
@@ -144,7 +140,7 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
             } else {
                 long start = System.currentTimeMillis();
-                LOGGER.severe(">>> Running search for precision " + precision + " with user filter: " + userFilterApplied);
+                LOGGER.severe(">>> Running search for precision " + precision);
                 final ElasticDataStore dataStore = getDataStore();
                 final String docType = dataStore.getDocType(entry.getName());
                 final boolean scroll = !useSortOrPagination(query) && dataStore.getScrollEnabled();
