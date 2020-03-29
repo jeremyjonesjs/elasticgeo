@@ -6,6 +6,8 @@ package mil.nga.giat.data.elasticsearch;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import com.github.davidmoten.geo.GeoHash;
+import com.github.davidmoten.geo.LatLong;
 import mil.nga.giat.data.elasticsearch.ElasticDataStore.ArrayEncoding;
 import mil.nga.giat.shaded.es.common.joda.Joda;
 import mil.nga.giat.shaded.joda.time.format.DateTimeFormatter;
@@ -18,6 +20,7 @@ import org.geotools.data.store.ContentState;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
 import org.geotools.util.logging.Logging;
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.Point;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
 import org.opengis.feature.type.AttributeDescriptor;
@@ -47,21 +50,36 @@ class ElasticFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFea
 
     private Iterator<ElasticHit> searchHitIterator;
 
-    private Iterator<List<Map<String,Object>>> aggregationIterator;
+    private Iterator aggregationIterator;
 
     private final ElasticParserUtil parserUtil;
 
+    private boolean combineBucketsIntoSingleFeature;
+
+    private int maxDocCount;
+
+    private static final float SCALED_MAX_DOC_COUNT = 1000f;
+
     public ElasticFeatureReader(ContentState contentState, ElasticResponse response) {
-        this(contentState, response.getHits(), response.getAggregations(), response.getMaxScore());
+        this(contentState, response, false);
+    }
+
+    public ElasticFeatureReader(ContentState contentState, ElasticResponse response, boolean combineBucketsIntoSingleFeature) {
+        this(contentState, response.getHits(), response.getAggregations(), response.getMaxScore(), combineBucketsIntoSingleFeature);
     }
 
     public ElasticFeatureReader(ContentState contentState, List<ElasticHit> hits, Map<String,ElasticAggregation> aggregations, float maxScore) {
+        this(contentState, hits, aggregations, maxScore, false);
+    }
+
+    public ElasticFeatureReader(ContentState contentState, List<ElasticHit> hits, Map<String,ElasticAggregation> aggregations, float maxScore, boolean combineBucketsIntoSingleFeature) {
         this.state = contentState;
         this.featureType = state.getFeatureType();
         this.searchHitIterator = hits.iterator();
         this.builder = new SimpleFeatureBuilder(featureType);
         this.parserUtil = new ElasticParserUtil();
         this.maxScore = maxScore;
+        this.combineBucketsIntoSingleFeature = combineBucketsIntoSingleFeature;
 
         this.aggregationIterator = Collections.emptyIterator();
         if (aggregations != null && !aggregations.isEmpty()) {
@@ -69,10 +87,30 @@ class ElasticFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFea
             if (aggregations.size() > 1) {
                 LOGGER.info("Result has multiple aggregations. Using " + aggregationName);
             }
-            List<Map<String, Object>> buckets = aggregations.get(aggregationName).getBuckets();
-            if (buckets != null) {
-                // TODO JEJ changed to return a single entry with all the buckets for performance
-                this.aggregationIterator = Arrays.asList(buckets).iterator();
+
+            if (combineBucketsIntoSingleFeature) {
+                List<Map<String, Object>> buckets = aggregations.get(aggregationName).getBuckets();
+                if (buckets != null) {
+                    // TODO JEJ changed to return a single entry with all the buckets for performance
+                    this.aggregationIterator = Arrays.asList(buckets).iterator();
+                }
+            } else {
+                if (aggregations.get(aggregationName).getBuckets() != null) {
+                    List<Map<String, Object>> buckets = aggregations.get(aggregationName).getBuckets();
+                    Collections.sort(buckets, (Comparator<Map<String, Object>>) (o1, o2) -> {
+                        return ((Number) o1.get("doc_count")).intValue() - ((Number) o2.get("doc_count")).intValue();
+                    });
+                    this.aggregationIterator = buckets.iterator();
+                }
+
+                maxDocCount = 0;
+                for (Iterator iter = aggregations.get(aggregationName).getBuckets().iterator(); iter.hasNext();) {
+                    Map<String, Object> aggregation = (Map<String, Object>) iter.next();
+                    if (aggregation.containsKey("doc_count")) {
+                        maxDocCount = Math.max(maxDocCount, ((Number) aggregation.get("doc_count")).intValue());
+                    }
+                }
+                LOGGER.severe("MAX DOC COUNT: " + maxDocCount);
             }
         }
 
@@ -98,8 +136,7 @@ class ElasticFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFea
         if (searchHitIterator.hasNext()) {
             id = nextHit();
         } else {
-            nextAggregation();
-            id = null;
+            id = nextAggregation();
         }
         return builder.buildFeature(id);
     }
@@ -177,8 +214,37 @@ class ElasticFeatureReader implements FeatureReader<SimpleFeatureType, SimpleFea
         return state.getEntry().getTypeName() + "." + hit.getId();
     }
 
-    private void nextAggregation() {
-        builder.set("_aggregation", aggregationIterator.next());
+    private String nextAggregation() {
+        if (combineBucketsIntoSingleFeature) {
+            builder.set("_aggregation", aggregationIterator.next());
+            return null;
+        } else {
+            final Map<String, Object> aggregation = (Map<String, Object>) aggregationIterator.next();
+            String id = (String) aggregation.get("key");
+            int docCount = ((Number) aggregation.get("doc_count")).intValue();
+            int scaledDocCount = scaleDocCount(docCount);
+
+            builder.set("_id", id);
+            builder.set("_index", "cell-towers");
+            builder.set("_relative_score", 1f);
+            builder.set("_score", 1f);
+            builder.set("_type", "_doc");
+            builder.set("range", scaledDocCount);
+
+            LatLong latLong = GeoHash.decodeHash(id);
+            Map<String, Object> location = new LinkedHashMap<>();
+            location.put("lat", latLong.getLat());
+            location.put("lon", latLong.getLon());
+            builder.set("location", parserUtil.createGeometry(location));
+
+            return id;
+        }
+    }
+
+    private int scaleDocCount(int docCount) {
+        if (docCount == 0) { return 0; }
+
+        return (int) Math.round((SCALED_MAX_DOC_COUNT / Math.log(maxDocCount)) * Math.log(docCount));
     }
 
     @Override

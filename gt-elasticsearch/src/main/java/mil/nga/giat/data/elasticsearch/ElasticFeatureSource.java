@@ -125,6 +125,8 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 precision = Integer.parseInt((String) filterToElastic.getAggregations().get("agg").get("geohash_grid").get("precision"));
             }
 
+            boolean combineBucketsIntoSingleFeature = precision != null && precision < 8;
+
             // FIXME bug: if no results, request gets stuck in infinite loop and is killed by GS after 60s
 
             if (this.aggregationCache.supportsQuery(filterToElastic)) {
@@ -137,7 +139,7 @@ class ElasticFeatureSource extends ContentFeatureSource {
                     aggregations.put("cache", elasticAggregation);
                 }
 
-                reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f);
+                reader = new ElasticFeatureReader(getState(), new ArrayList<>(), aggregations, 0f, combineBucketsIntoSingleFeature);
             } else {
                 long start = System.currentTimeMillis();
                 LOGGER.severe(">>> Running search for precision " + precision);
@@ -158,7 +160,7 @@ class ElasticFeatureSource extends ContentFeatureSource {
                 }
 
                 if (!scroll) {
-                    reader = new ElasticFeatureReader(getState(), sr);
+                    reader = new ElasticFeatureReader(getState(), sr, combineBucketsIntoSingleFeature);
                 } else {
                     reader = new ElasticFeatureReaderScroll(getState(), sr, getSize(query));
                 }

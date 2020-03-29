@@ -135,23 +135,37 @@ abstract class GeoHashGrid {
     }
 
     private List<Map<String, Object>> readFeatures(SimpleFeatureCollection features) {
-        long start = System.currentTimeMillis();
-
         SimpleFeatureIterator featureIterator = features.features();
-        LOGGER.severe("Time in features(): " + (System.currentTimeMillis() - start) + " ms");
-
-        List<Map<String, Object>> buckets = Collections.emptyList();
-
-        try (SimpleFeatureIterator iterator = featureIterator) {
-            // TODO JEJ iterator will have zero or one items. If one, that one contains the entire list of buckets.
-            if (iterator.hasNext()) {
-                buckets = (List<Map<String, Object>>) iterator.next().getAttribute("_aggregation");
-            }
+        if (!featureIterator.hasNext()) {
+            return Collections.emptyList();
         }
 
-        LOGGER.severe("Total time in readFeatures: " + (System.currentTimeMillis() - start) + " ms");
+        SimpleFeature feature = featureIterator.next();
 
-        return buckets;
+        if (feature.getAttribute("_aggregation") instanceof List) {
+            // TODO JEJ iterator will have zero or one items. If one, that one contains the entire list of buckets.
+            return (List<Map<String, Object>>) feature.getAttribute("_aggregation");
+        } else {
+            final List<Map<String, Object>> buckets = new ArrayList<>();
+            final ObjectMapper mapper = new ObjectMapper();
+
+            try (SimpleFeatureIterator iterator = features.features()) {
+                while (iterator.hasNext()) {
+                    feature = iterator.next();
+                    if (feature.getAttribute("_aggregation") != null) {
+                        final byte[] data = (byte[]) feature.getAttribute("_aggregation");
+                        try {
+                            final Map<String,Object> aggregation = mapper.readValue(data, new TypeReference<Map<String,Object>>() {});
+                            buckets.add(aggregation);
+                        } catch (IOException e) {
+                            LOGGER.fine("Failed to parse aggregation value: " + e);
+                        }
+                    }
+                }
+            }
+
+            return buckets;
+        }
     }
 
     private Envelope computeEnvelope(ReferencedEnvelope outEnvelope, int precision) {
